@@ -3,6 +3,32 @@ body {
   height: 100%;
 }
 
+  .top-nav-centered {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    gap: rem(20px);
+    z-index: 11;
+
+    a {
+      color: $accentDark;
+      text-decoration: none;
+      font-size: rem(14px);
+      font-weight: 500;
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+
+    @include media("<sm") {
+      display: none;
+    }
+  }
+
 .bar-header {
   background-color: $primaryDark;
   padding: rem(10px) rem(15px);
