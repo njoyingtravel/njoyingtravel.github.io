@@ -5,8 +5,8 @@
     <description>Tak sobie kicam</description>
     <link>/</link>
     <atom:link href="/feed.xml" rel="self" type="application/rss+xml"/>
-    <pubDate>Sun, 06 Apr 2025 11:56:08 +0200</pubDate>
-    <lastBuildDate>Sun, 06 Apr 2025 11:56:08 +0200</lastBuildDate>
+    <pubDate>Sun, 06 Apr 2025 12:32:20 +0200</pubDate>
+    <lastBuildDate>Sun, 06 Apr 2025 12:32:20 +0200</lastBuildDate>
     <generator>Jekyll v3.10.0</generator>
     
       <item>
@@ -55,10 +55,16 @@
         <title>Japonia 🇯🇵</title>
         <description>&lt;p&gt;&lt;a href=&quot;#tokyo&quot; style=&quot;float: left;&quot;&gt;Tokyo &lt;/a&gt; &lt;a href=&quot;#kyoto&quot; style=&quot;float: left;&quot;&gt;Kyoto &lt;/a&gt; &lt;a href=&quot;#osaka&quot; style=&quot;float: left;&quot;&gt;Osaka&lt;/a&gt; &lt;a href=&quot;#tipy&quot; style=&quot;float: right;&quot;&gt;Tipy&lt;/a&gt;&lt;/p&gt; &lt;div style=&quot;clear: both;&quot;&gt;&lt;/div&gt; &lt;p style=&quot;text-align: justify&quot;&gt; Sed ut perspiciatis, unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam eaque ipsa, quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt, explicabo. Nemo enim ipsam voluptatem, quia voluptas sit, aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos, qui ratione voluptatem sequi nesciunt, neque porro quisquam est, qui dolorem ipsum, quia dolor sit, amet, consectetur, adipisci velit, sed quia non numquam eius modi tempora incidunt, ut labore...</description>
         <pubDate>Thu, 22 Nov 2018 13:26:40 +0100</pubDate>
-        <link>/tokyo/</link>
-        <guid isPermaLink="true">/tokyo/</guid>
+        <link>/japonia-tokyo-osaka-kyoto/</link>
+        <guid isPermaLink="true">/japonia-tokyo-osaka-kyoto/</guid>
         
-        <category>japonia</category>
+        <category>tokyo</category>
+        
+        <category>kyoto</category>
+        
+        <category>osaka</category>
+        
+        <category>tipy</category>
         
         <category>azja</category>
       </item>
