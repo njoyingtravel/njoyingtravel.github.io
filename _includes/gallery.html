@@ -1,0 +1,27 @@
+{% if include.images %}
+  {% assign images = include.images | split: "," %}
+{% elsif include.folder %}
+  {% assign all_images = site.static_files | where: "collection", "posts" %}
+  {% assign images = site.static_files | where: "path", "/images/" | where: "extname", ".jpg" %}
+{% endif %}
+
+<div class="gallery-container">
+  <button class="gallery-button prev-button">&#8592;</button>
+
+  <div class="gallery-wrapper">
+    <div class="gallery">
+      <div class="gallery-inner">
+        {% for file in site.static_files %}
+          {% if file.path contains include.folder %}
+            <div class="image-wrapper">
+              <img src="{{ file.path }}" alt="Gallery image" class="gallery-image">
+            </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    <div class="indicators"></div>
+  </div>
+
+  <button class="gallery-button next-button">&#8594;</button>
+</div>
