@@ -1,3 +1,13 @@
 ---
 ---
 @import "jekflix";
+
+.time-to-read {
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .time-to-read {
+    display: none;
+  }
+}

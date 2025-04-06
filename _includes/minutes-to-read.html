@@ -6,4 +6,6 @@
   {% assign totalMinutes = words | divided_by:180 %}
 {% endif %}
 
-{% assign minutesText = totalMinutes | append: ' min to read' %}
+<div class="time-to-read">
+  {{ totalMinutes }} min to read
+</div>

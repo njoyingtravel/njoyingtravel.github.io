@@ -1,0 +1,103 @@
+.gallery-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 40px;
+}
+
+.gallery-button {
+  font-size: 2rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+  flex-shrink: 0;
+}
+
+.gallery-button.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gallery-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 700px;
+  width: 100%;
+}
+
+.gallery {
+  overflow: hidden;
+  width: 100%;
+}
+
+.gallery-inner {
+  display: flex;
+  transition: transform 0.3s ease;
+}
+
+.image-wrapper {
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto;
+  position: relative;
+  overflow: hidden;
+}
+
+.gallery-image {
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  display: block;
+}
+
+.indicators {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+  gap: 8px;
+}
+
+.indicator {
+  width: 12px;
+  height: 12px;
+  background-color: #ccc;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.3s ease;
+}
+
+.indicator.active {
+  background-color: #555;
+  transform: scale(1.2);
+}
+
+/* Mobile tweaks */
+@media (max-width: 768px) {
+  .gallery-container {
+    gap: 5px;
+  }
+
+  .gallery-wrapper {
+    max-width: 95%; /* almost full width */
+  }
+
+  .gallery-button {
+    font-size: 1.2rem; /* smaller arrows */
+    padding: 5px;      /* little space around arrows */
+  }
+
+  .gallery-image {
+    height: auto;
+    object-fit: contain;
+  }
+
+  .image-wrapper {
+    height: auto; /* image scales naturally */
+  }
+}
