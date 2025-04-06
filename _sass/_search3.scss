@@ -15,7 +15,7 @@
   transition: transform 300ms ease;
 
   &.active {
-    transform: translateY(1px);
+    transform: translateY(0);
   }
 }
 
