@@ -62,8 +62,10 @@
 
         <!-- Add time bar only for pages without pagination -->
         {% if paginator.activated == nil and site.show_time_bar == true %}
+          <div class="maybe-time-bar">
             {% include time-bar.html %}
-            {% include recommendation.html %}
+          </div>
+          {% include recommendation.html %}
         {% endif %}
 
         <!-- Show modal if the post is the last one -->
@@ -160,6 +162,15 @@
             "articleSection": "{{ page.category }}",
             "keywords": [{{ page.tags | join: '","' | append: '"' | prepend: '"' }}]
         }
+        </script>
+        <script>
+        document.addEventListener("DOMContentLoaded", function() {
+          if (window.matchMedia("(max-width: 768px)").matches) {
+            document.querySelectorAll(".maybe-time-to-read, .maybe-time-bar").forEach(function(el) {
+              el.remove();
+            });
+          }
+        });
         </script>
     </body>
 </html>
