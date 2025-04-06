@@ -1,5 +1,8 @@
 source "https://rubygems.org"
-
+gem 'csv'
+gem 'base64'
+gem 'logger'
+gem 'bigdecimal'
 gem "kramdown"
 gem "kramdown-parser-gfm"
 gem "rouge"
