@@ -18,6 +18,14 @@
 const canvas = document.getElementById('globeCanvas');
 const ctx = canvas.getContext('2d');
 
+let rotationDegrees = 0; // Horizontal rotation degrees
+let tiltDegrees = 0;     // Vertical tilt degrees
+let isDragging = false; // Check if mouse is pressed
+let lastMouseX = 0; // Store last mouse X position for rotation
+let lastMouseY = 0; // Store last mouse Y position for rotation
+let autoRotate = true; // Flag to control auto-rotation
+
+// Resize the canvas to fill the entire screen
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -25,12 +33,7 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
-// const continents = [
-//   [ {lon: -30, lat: 10}, {lon: -10, lat: 30}, {lon: 10, lat: 10}, {lon: -10, lat: -10} ],
-//   [ {lon: 100, lat: 20}, {lon: 140, lat: 40}, {lon: 160, lat: 10}, {lon: 120, lat: -10} ],
-//   [ {lon: -100, lat: 40}, {lon: -80, lat: 60}, {lon: -60, lat: 40}, {lon: -80, lat: 20} ]
-// ];
-
+// Spherical to Cartesian conversion for globe projection
 function sphericalToCartesian(lon, lat) {
   const rad = Math.PI / 180;
   const lonRad = lon * rad;
@@ -50,6 +53,16 @@ function rotateY(p, angleRad) {
     x: p.x * cosA + p.z * sinA,
     y: p.y,
     z: -p.x * sinA + p.z * cosA
+  };
+}
+
+function rotateX(p, angleRad) {
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  return {
+    x: p.x,
+    y: p.y * cosA - p.z * sinA,
+    z: p.y * sinA + p.z * cosA
   };
 }
 
@@ -82,7 +95,6 @@ function findHorizonIntersection(p1, p2) {
   return { point: intersection, type: 'intersection' };
 }
 
-// --- NEW: Subdivide Continent Function ---
 function subdivideContinent(continent, maxSegmentDegrees = 10) {
   const subdivided = [];
   for (let i = 0; i < continent.length; i++) {
@@ -91,7 +103,6 @@ function subdivideContinent(continent, maxSegmentDegrees = 10) {
 
     subdivided.push(current);
 
-    // Calculate distance in degrees (roughly)
     const dLon = next.lon - current.lon;
     const dLat = next.lat - current.lat;
     const dist = Math.hypot(dLon, dLat);
@@ -109,10 +120,8 @@ function subdivideContinent(continent, maxSegmentDegrees = 10) {
   return subdivided;
 }
 
-// --- Preprocess Continents ---
+// Preprocess the continents for smoother rendering
 const subdividedContinents = continents.map(continent => subdivideContinent(continent, 2));
-
-let rotationDegrees = 0;
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -121,17 +130,18 @@ function draw() {
   const cy = canvas.height / 2;
   const radius = Math.min(cx, cy) * 0.8;
   const rotationRadians = rotationDegrees * Math.PI / 180;
+  const tiltRadians = tiltDegrees * Math.PI / 180;
 
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fillStyle = 'white';
+  ctx.fillStyle = 'white'; // Keep original colors
   ctx.fill();
 
   ctx.fillStyle = 'black';
 
   subdividedContinents.forEach(continent => {
     const rotatedVertices = continent.map(p =>
-      rotateY(sphericalToCartesian(p.lon, p.lat), rotationRadians)
+      rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians)
     );
 
     const pathSegments = [];
@@ -191,11 +201,39 @@ function draw() {
     ctx.fill();
   });
 
-  rotationDegrees += 0.1;
-  if (rotationDegrees >= 360) rotationDegrees -= 360;
+  if (autoRotate) {
+    rotationDegrees += 0.1;
+    if (rotationDegrees >= 360) rotationDegrees -= 360;
+  }
 
   requestAnimationFrame(draw);
 }
+
+// Handle mouse events for controlling rotation
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  autoRotate = false;  // Stop automatic rotation
+});
+
+canvas.addEventListener('mouseup', () => {
+  isDragging = false;
+  autoRotate = false;  // Ensure auto-rotation stays off after the mouse release
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (isDragging) {
+    const deltaX = e.clientX - lastMouseX;
+    const deltaY = -(e.clientY - lastMouseY);
+
+    rotationDegrees += deltaX * 0.1; // Adjust the sensitivity here (horizontal movement)
+    tiltDegrees -= deltaY * 0.1;    // Invert vertical mouse movement
+
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+  }
+});
 
 draw();
 </script>

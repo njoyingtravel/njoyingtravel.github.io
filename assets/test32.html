@@ -2,17 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Rotating Globe - Fixed Horizon Snapping (Subdivision Enhanced)</title>
+  <title>Rotating Globe - Clean Version</title>
   <style>
     body { margin: 0; overflow: hidden; background: black; }
     canvas { display: block; }
   </style>
 </head>
 <body>
-<canvas id="globeCanvas"></canvas>
 
-<!-- Link to the continents.js file -->
-<script src="continents.js"></script>
+<canvas id="globeCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('globeCanvas');
@@ -25,12 +23,14 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
-// const continents = [
-//   [ {lon: -30, lat: 10}, {lon: -10, lat: 30}, {lon: 10, lat: 10}, {lon: -10, lat: -10} ],
-//   [ {lon: 100, lat: 20}, {lon: 140, lat: 40}, {lon: 160, lat: 10}, {lon: 120, lat: -10} ],
-//   [ {lon: -100, lat: 40}, {lon: -80, lat: 60}, {lon: -60, lat: 40}, {lon: -80, lat: 20} ]
-// ];
+// --- Simple Continent Data ---
+const continents = [
+  [ {lon: -30, lat: 10}, {lon: -10, lat: 30}, {lon: 10, lat: 10}, {lon: -10, lat: -10} ],
+  [ {lon: 100, lat: 20}, {lon: 140, lat: 40}, {lon: 160, lat: 10}, {lon: 120, lat: -10} ],
+  [ {lon: -100, lat: 40}, {lon: -80, lat: 60}, {lon: -60, lat: 40}, {lon: -80, lat: 20} ]
+];
 
+// --- Utils ---
 function sphericalToCartesian(lon, lat) {
   const rad = Math.PI / 180;
   const lonRad = lon * rad;
@@ -66,7 +66,7 @@ function findHorizonIntersection(p1, p2) {
   const dz = p2.z - p1.z;
   if (Math.abs(dz) < 1e-9) return null;
 
-  const t = (0 - p1.z) / (p2.z - p1.z);
+  const t = (0 - p1.z) / dz;
   const intersection = {
     x: p1.x + (p2.x - p1.x) * t,
     y: p1.y + (p2.y - p1.y) * t,
@@ -82,36 +82,6 @@ function findHorizonIntersection(p1, p2) {
   return { point: intersection, type: 'intersection' };
 }
 
-// --- NEW: Subdivide Continent Function ---
-function subdivideContinent(continent, maxSegmentDegrees = 10) {
-  const subdivided = [];
-  for (let i = 0; i < continent.length; i++) {
-    const current = continent[i];
-    const next = continent[(i + 1) % continent.length];
-
-    subdivided.push(current);
-
-    // Calculate distance in degrees (roughly)
-    const dLon = next.lon - current.lon;
-    const dLat = next.lat - current.lat;
-    const dist = Math.hypot(dLon, dLat);
-
-    const segments = Math.ceil(dist / maxSegmentDegrees);
-
-    for (let j = 1; j < segments; j++) {
-      const t = j / segments;
-      subdivided.push({
-        lon: current.lon + dLon * t,
-        lat: current.lat + dLat * t
-      });
-    }
-  }
-  return subdivided;
-}
-
-// --- Preprocess Continents ---
-const subdividedContinents = continents.map(continent => subdivideContinent(continent, 2));
-
 let rotationDegrees = 0;
 
 function draw() {
@@ -122,6 +92,7 @@ function draw() {
   const radius = Math.min(cx, cy) * 0.8;
   const rotationRadians = rotationDegrees * Math.PI / 180;
 
+  // --- Draw Globe ---
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fillStyle = 'white';
@@ -129,7 +100,8 @@ function draw() {
 
   ctx.fillStyle = 'black';
 
-  subdividedContinents.forEach(continent => {
+  // --- Draw Continents ---
+  continents.forEach(continent => {
     const rotatedVertices = continent.map(p =>
       rotateY(sphericalToCartesian(p.lon, p.lat), rotationRadians)
     );
@@ -145,7 +117,6 @@ function draw() {
       }
       if (intersection) {
         pathSegments.push(intersection);
-        if (p2.z < 0) continue; // Skip to next vertex if p2 is behind
       }
     }
 
@@ -158,6 +129,7 @@ function draw() {
     for (let i = 1; i < pathSegments.length; i++) {
       const curr = pathSegments[i];
       const prev = pathSegments[i - 1];
+
       const projCurr = project(curr.point, radius, cx, cy);
       const projPrev = project(prev.point, radius, cx, cy);
 
@@ -172,7 +144,7 @@ function draw() {
       }
     }
 
-    // Close the path by connecting back to the first point if needed
+    // --- Extra Closing Arc if Needed ---
     const last = pathSegments[pathSegments.length - 1];
     const first = pathSegments[0];
     if (last.type === 'intersection' && first.type === 'intersection') {
@@ -191,6 +163,7 @@ function draw() {
     ctx.fill();
   });
 
+  // --- Animate ---
   rotationDegrees += 0.1;
   if (rotationDegrees >= 360) rotationDegrees -= 360;
 
@@ -199,5 +172,6 @@ function draw() {
 
 draw();
 </script>
+
 </body>
 </html>

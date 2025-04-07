@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rotating Globe - Fixed Horizon Boundaries</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="globeCanvas"></canvas>
+<script>
+const canvas = document.getElementById('globeCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- CONTINENT DATA ---
+// Added more points for better shape representation
+const continents = [
+  // Africa/Europe-ish
+  [ {lon: -18, lat: 35}, {lon: 40, lat: 30}, {lon: 35, lat: 0}, {lon: 20, lat: -30}, {lon: -5, lat: -20}, {lon: -10, lat: 10} ],
+  // Asia/Australia-ish
+  [ {lon: 90, lat: 50}, {lon: 150, lat: 60}, {lon: 170, lat: 0}, {lon: 140, lat: -30}, {lon: 110, lat: -20}, {lon: 80, lat: 10} ],
+  // Americas-ish
+  [ {lon: -120, lat: 60}, {lon: -50, lat: 70}, {lon: -40, lat: 20}, {lon: -60, lat: -40}, {lon: -80, lat: -50}, {lon: -100, lat: 0}, {lon: -110, lat: 30} ]
+];
+
+// Convert lon/lat to 3D Cartesian coordinates (Unit Sphere)
+function sphericalToCartesian(lon, lat) {
+  const rad = Math.PI / 180;
+  const lonRad = lon * rad;
+  const latRad = lat * rad;
+  const cosLat = Math.cos(latRad);
+  return {
+    x: cosLat * Math.sin(lonRad),
+    y: Math.sin(latRad),
+    z: cosLat * Math.cos(lonRad),
+    lon: lon, // Keep original lon/lat for potential debugging
+    lat: lat
+  };
+}
+
+// Rotate a point around the Y-axis (vertical)
+function rotateY(p, angleRad) {
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  return {
+    x: p.x * cosA + p.z * sinA,
+    y: p.y,
+    z: -p.x * sinA + p.z * cosA
+  };
+}
+
+// Project 3D to 2D canvas coordinates (Orthographic)
+function project(p, radius, cx, cy) {
+  return {
+    x: cx + p.x * radius,
+    y: cy - p.y * radius
+  };
+}
+
+// Find horizon intersection - returns the 3D point on the horizon (z=0, normalized x,y)
+function findHorizonIntersection(p1, p2) {
+    // Check if both points are on the same side of the horizon plane
+    if ((p1.z >= 0 && p2.z >= 0) || (p1.z < 0 && p2.z < 0)) {
+        return null;
+    }
+
+    // Parameter t representing the intersection point along the line segment p1 -> p2
+    const dz = p1.z - p2.z;
+    if (Math.abs(dz) < 1e-9) return null; 
+
+    const t = p1.z / dz;
+
+    // Calculate intersection point coordinates
+    let intersection = {
+        x: p1.x + (p2.x - p1.x) * t,
+        y: p1.y + (p2.y - p1.y) * t,
+        z: 0
+    };
+
+    // Normalize the intersection point's x and y so it lies exactly on the unit circle horizon
+    const len = Math.hypot(intersection.x, intersection.y);
+    if (len < 1e-9) return intersection;
+
+    intersection.x /= len;
+    intersection.y /= len;
+
+    // Mark this point as an intersection point
+    intersection.isIntersection = true;
+
+    return intersection;
+}
+
+let rotationDegrees = 0;
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = Math.min(cx, cy) * 0.8;
+  const rotationRadians = rotationDegrees * Math.PI / 180;
+
+  // Draw Globe Background
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'lightblue';
+  ctx.fill();
+  ctx.strokeStyle = 'grey';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Draw Continents
+  ctx.fillStyle = 'darkgreen';
+
+  continents.forEach(continent => {
+    const rotatedVertices = continent.map(p =>
+      rotateY(sphericalToCartesian(p.lon, p.lat), rotationRadians)
+    );
+
+    // --- Build the path including clipped segments ---
+    const visibleSegments = [];
+    
+    // First, collect all visible vertices and intersection points in proper order
+    for (let i = 0; i < rotatedVertices.length; i++) {
+      const current = rotatedVertices[i];
+      const next = rotatedVertices[(i + 1) % rotatedVertices.length];
+      
+      // If current point is visible, add it
+      if (current.z >= 0) {
+        visibleSegments.push({ point: current, type: 'vertex', index: i });
+      }
+      
+      // Check if the edge crosses the horizon
+      const intersection = findHorizonIntersection(current, next);
+      if (intersection) {
+        visibleSegments.push({ 
+          point: intersection, 
+          type: 'intersection', 
+          exitIndex: current.z >= 0 ? i : null,
+          entryIndex: next.z >= 0 ? (i + 1) % rotatedVertices.length : null
+        });
+      }
+    }
+    
+    if (visibleSegments.length < 2) return; // Not enough points to draw
+    
+    // Group segments by visibility region
+    const visibilityGroups = [];
+    let currentGroup = [];
+    
+    // Sort points to ensure proper ordering
+    visibleSegments.sort((a, b) => {
+      if (a.type === 'vertex' && b.type === 'vertex') {
+        // Compare vertex indices
+        return a.index - b.index;
+      }
+      // Handle intersections and mixed cases based on their associated vertices
+      // This is a simplified sort that may need improvement for complex shapes
+      return 0;
+    });
+    
+    // Now create the path
+    ctx.beginPath();
+    
+    // Special case: If we only have intersections, we need to draw the back half of the circle
+    if (visibleSegments.every(seg => seg.type === 'intersection')) {
+      const firstProj = project(visibleSegments[0].point, radius, cx, cy);
+      ctx.moveTo(firstProj.x, firstProj.y);
+      
+      for (let i = 0; i < visibleSegments.length; i++) {
+        const current = visibleSegments[i];
+        const next = visibleSegments[(i + 1) % visibleSegments.length];
+        
+        const currProj = project(current.point, radius, cx, cy);
+        const nextProj = project(next.point, radius, cx, cy);
+        
+        // Calculate angles for arc
+        const startAngle = Math.atan2(currProj.y - cy, currProj.x - cx);
+        let endAngle = Math.atan2(nextProj.y - cy, nextProj.x - cx);
+        
+        // Ensure we draw the shorter arc (the visible part)
+        let angleDiff = endAngle - startAngle;
+        if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        
+        // Draw visible part along horizon
+        if (Math.abs(angleDiff) < Math.PI) {
+          ctx.arc(cx, cy, radius, startAngle, endAngle, false);
+        } else {
+          ctx.arc(cx, cy, radius, startAngle, endAngle, true);
+        }
+      }
+    } else {
+      // Regular case with vertices and intersections
+      const firstPoint = visibleSegments[0].point;
+      const firstProj = project(firstPoint, radius, cx, cy);
+      ctx.moveTo(firstProj.x, firstProj.y);
+      
+      for (let i = 1; i <= visibleSegments.length; i++) {
+        const currentIndex = i % visibleSegments.length;
+        const prevIndex = (i - 1) % visibleSegments.length;
+        
+        const current = visibleSegments[currentIndex];
+        const prev = visibleSegments[prevIndex];
+        
+        const currProj = project(current.point, radius, cx, cy);
+        
+        // If both points are horizon intersections, draw an arc
+        if (prev.type === 'intersection' && current.type === 'intersection') {
+          const prevProj = project(prev.point, radius, cx, cy);
+          
+          // Calculate angles for the arc
+          const startAngle = Math.atan2(prevProj.y - cy, prevProj.x - cx);
+          let endAngle = Math.atan2(currProj.y - cy, currProj.x - cx);
+          
+          // Calculate the shortest arc direction
+          let angleDiff = endAngle - startAngle;
+          if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          
+          // Use the shorter arc (always the visible one)
+          const counterClockwise = angleDiff < 0;
+          
+          // Draw the arc along the horizon
+          ctx.arc(cx, cy, radius, startAngle, endAngle, counterClockwise);
+        } else {
+          // Regular line
+          ctx.lineTo(currProj.x, currProj.y);
+        }
+      }
+    }
+    
+    ctx.closePath();
+    ctx.fill();
+  });
+
+  rotationDegrees += 0.3;
+  if (rotationDegrees >= 360) rotationDegrees -= 360;
+
+  requestAnimationFrame(draw);
+}
+
+// Start animation
+draw();
+</script>
+</body>
+</html>

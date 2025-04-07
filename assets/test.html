@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rotating Globe - Corrected Wrap</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<canvas id="globeCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('globeCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- USER'S ORIGINAL CONTINENT DATA ---
+const continents = [
+  [ {lon: -30, lat: 10}, {lon: -10, lat: 30}, {lon: 10, lat: 10}, {lon: -10, lat: -10} ],
+  [ {lon: 100, lat: 20}, {lon: 140, lat: 40}, {lon: 160, lat: 10}, {lon: 120, lat: -10} ],
+  [ {lon: -100, lat: 40}, {lon: -80, lat: 60}, {lon: -60, lat: 40}, {lon: -80, lat: 20} ]
+];
+
+// Convert lon/lat to 3D Cartesian coordinates (Unit Sphere)
+// Using Z towards viewer at lon=0, X right, Y up
+function sphericalToCartesian(lon, lat) {
+  const rad = Math.PI / 180;
+  const lonRad = lon * rad;
+  const latRad = lat * rad;
+  const cosLat = Math.cos(latRad);
+  return {
+    x: cosLat * Math.sin(lonRad), // X = R*cos(lat)*sin(lon)
+    y: Math.sin(latRad),         // Y = R*sin(lat)
+    z: cosLat * Math.cos(lonRad)  // Z = R*cos(lat)*cos(lon) -> Points towards viewer at lon=0
+  };
+}
+
+// Rotate a point around the Y-axis (vertical)
+function rotateY(p, angleRad) {
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  return {
+    x: p.x * cosA + p.z * sinA,
+    y: p.y,
+    z: -p.x * sinA + p.z * cosA // Standard Y rotation for Z-out coordinate system
+  };
+}
+
+// Project 3D to 2D canvas coordinates (Orthographic)
+function project(p, radius, cx, cy) {
+  return {
+    x: cx + p.x * radius,
+    y: cy - p.y * radius // Invert Y for canvas
+  };
+}
+
+// Interpolate crossing with horizon plane (z=0)
+function interpolateHorizon(p1, p2) {
+  const z1 = p1.z;
+  const z2 = p2.z;
+  const TOLERANCE = 1e-9; // Tolerance for floating point comparisons
+
+  // Check if points are effectively on the same side or one is on the horizon
+  if (z1 * z2 > -TOLERANCE) {
+      return null; // No crossing or edge is on/behind horizon
+  }
+  // Avoid division by zero if z coordinates are identical (should be caught above, but safety)
+   if (Math.abs(z2 - z1) < TOLERANCE) {
+       return null;
+   }
+
+  // Parameter t for the intersection point P = p1 + t * (p2 - p1) such that P.z = 0
+  const t = -z1 / (z2 - z1);
+
+  // Due to the z1*z2 check, t should be between 0 and 1. Clamp for safety.
+  const clampedT = Math.max(0, Math.min(1, t));
+
+  return {
+    x: p1.x + (p2.x - p1.x) * clampedT,
+    y: p1.y + (p2.y - p1.y) * clampedT,
+    z: 0 // Intersection is exactly on the z=0 plane
+  };
+}
+
+// Compute angle on the screen (canvas coordinates) for horizon stitching
+function getScreenAngle(projP, cx, cy) {
+    const dx = projP.x - cx;
+    const dy = projP.y - cy; // screen Y is down
+    return Math.atan2(dy, dx); // Angle CCW from positive X-axis
+}
+
+let rotationDegrees = 0;
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = Math.min(cx, cy) * 0.8; // Keep some margin
+  const rotationRadians = rotationDegrees * Math.PI / 180;
+
+  // --- Draw Globe Background (Original white) ---
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'white';
+  ctx.fill();
+
+  // --- Draw Continents (Original black fill/stroke) ---
+  ctx.fillStyle = 'black';
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 1;
+
+  continents.forEach(continent => {
+    // 1. Rotate all vertices
+    const rotatedVertices = continent.map(p =>
+        rotateY(sphericalToCartesian(p.lon, p.lat), rotationRadians)
+    );
+
+    // 2. Build the list of 3D points defining the visible path, including horizon intersections
+    const visiblePath3D = [];
+    const horizonIntersections3D = []; // Store only the intersections
+
+    for (let i = 0; i < rotatedVertices.length; i++) {
+      const p1 = rotatedVertices[i];
+      const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
+
+      const p1_visible = p1.z >= 0; // Point is in front if z >= 0
+      const p2_visible = p2.z >= 0;
+
+      const intersection = interpolateHorizon(p1, p2);
+
+      if (p1_visible) {
+        visiblePath3D.push(p1); // Add starting point if visible
+      }
+
+      if (intersection) {
+        // Add intersection point regardless of which direction we cross
+        // This point marks the boundary on the visible path
+        visiblePath3D.push(intersection);
+        horizonIntersections3D.push(intersection);
+      }
+
+      // Note: p2 will be added as p1 in the next iteration if it's visible.
+      // This structure avoids duplicate points while ensuring correct order.
+    }
+
+    // Filter out consecutive duplicate points (can happen at intersections)
+    const uniqueVisiblePath3D = visiblePath3D.filter((p, i, arr) => {
+        if (i === 0) return true;
+        const prev = arr[i-1];
+        // Check distance for near-duplicates due to floating point math
+        const dx = p.x - prev.x;
+        const dy = p.y - prev.y;
+        const dz = p.z - prev.z;
+        return (dx*dx + dy*dy + dz*dz) > 1e-12; // Threshold for distinct points
+    });
+
+
+    // 3. Draw the path
+    if (uniqueVisiblePath3D.length < 2) return; // Nothing to draw
+
+    ctx.beginPath();
+    const firstPointProj = project(uniqueVisiblePath3D[0], radius, cx, cy);
+    ctx.moveTo(firstPointProj.x, firstPointProj.y);
+
+    for (let i = 1; i < uniqueVisiblePath3D.length; i++) {
+      const p = uniqueVisiblePath3D[i];
+      const proj = project(p, radius, cx, cy);
+      ctx.lineTo(proj.x, proj.y);
+    }
+
+    // 4. Close the path: Arc or Line
+    if (horizonIntersections3D.length === 2) {
+      // We expect the path to start and end at the intersections.
+      const startPoint3D = uniqueVisiblePath3D[0];
+      const endPoint3D = uniqueVisiblePath3D[uniqueVisiblePath3D.length - 1];
+
+      // Check if start/end points are indeed horizon points (z approx 0)
+      if (Math.abs(startPoint3D.z) < 1e-6 && Math.abs(endPoint3D.z) < 1e-6) {
+         const startPointProj = project(startPoint3D, radius, cx, cy); // Same as firstPointProj
+         const endPointProj = project(endPoint3D, radius, cx, cy);   // Last point drawn by lineTo
+
+         const angleStart = getScreenAngle(startPointProj, cx, cy);
+         const angleEnd = getScreenAngle(endPointProj, cx, cy);
+
+         // Draw arc FROM the angle of the last drawn point (endPoint)
+         // TO the angle of the first point (startPoint).
+         // The direction determines if it goes across the front or back.
+         // 'false' (CCW) usually traces the visible limb correctly if polygon points are CCW.
+         // Let's try 'false' first as it felt more logical in previous attempts.
+         // If it cuts across the front, change to 'true'.
+         ctx.arc(cx, cy, radius, angleEnd, angleStart, false); // << TRY false (CCW) first
+
+      } else {
+          // Should not happen if clipping logic is right, but fallback
+          console.warn("Path endpoints did not match expected horizon intersections.");
+          ctx.closePath(); // Linear close
+      }
+
+    } else {
+      // Polygon is fully visible (no intersections) or fully hidden (path length < 2)
+      // or complex case with >2 intersections (e.g., wraps pole) -> just close linearly.
+      ctx.closePath();
+    }
+
+    ctx.fill();
+    // ctx.stroke(); // Uncomment if you want outlines
+
+  });
+
+  rotationDegrees += 0.2; // Increment rotation
+  if (rotationDegrees >= 360) rotationDegrees -= 360;
+
+  requestAnimationFrame(draw); // Loop animation
+}
+
+// Initial draw
+draw();
+</script>
+
+</body>
+</html>

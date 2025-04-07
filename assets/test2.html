@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rotating Globe - Corrected Wrap</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<canvas id="globeCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('globeCanvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// --- USER'S ORIGINAL CONTINENT DATA ---
+const continents = [
+  [ {lon: -30, lat: 10}, {lon: -10, lat: 30}, {lon: 10, lat: 10}, {lon: -10, lat: -10} ],
+  [ {lon: 100, lat: 20}, {lon: 140, lat: 40}, {lon: 160, lat: 10}, {lon: 120, lat: -10} ],
+  [ {lon: -100, lat: 40}, {lon: -80, lat: 60}, {lon: -60, lat: 40}, {lon: -80, lat: 20} ]
+];
+
+// Convert lon/lat to 3D Cartesian coordinates (Unit Sphere)
+function sphericalToCartesian(lon, lat) {
+  const rad = Math.PI / 180;
+  const lonRad = lon * rad;
+  const latRad = lat * rad;
+  const cosLat = Math.cos(latRad);
+  return {
+    x: cosLat * Math.sin(lonRad),
+    y: Math.sin(latRad),
+    z: cosLat * Math.cos(lonRad)
+  };
+}
+
+// Rotate a point around the Y-axis (vertical)
+function rotateY(p, angleRad) {
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  return {
+    x: p.x * cosA + p.z * sinA,
+    y: p.y,
+    z: -p.x * sinA + p.z * cosA
+  };
+}
+
+// Project 3D to 2D canvas coordinates (Orthographic)
+function project(p, radius, cx, cy) {
+  return {
+    x: cx + p.x * radius,
+    y: cy - p.y * radius
+  };
+}
+
+// Find horizon intersection with much greater precision
+function interpolateHorizon(p1, p2) {
+  // If both points are on the same side of horizon plane, no intersection
+  if ((p1.z <= 0 && p2.z <= 0) || (p1.z >= 0 && p2.z >= 0)) {
+    return null;
+  }
+  
+  // Binary search for increased precision
+  let a = p1;
+  let b = p2;
+  let midpoint = null;
+  const PRECISION = 0.000001;
+  
+  // Do binary search to find exact z=0 point
+  for (let i = 0; i < 20; i++) { // 20 iterations for high precision
+    midpoint = {
+      x: (a.x + b.x) / 2,
+      y: (a.y + b.y) / 2,
+      z: (a.z + b.z) / 2
+    };
+    
+    // Normalize to ensure point is exactly on sphere
+    const len = Math.sqrt(midpoint.x * midpoint.x + midpoint.y * midpoint.y + midpoint.z * midpoint.z);
+    midpoint.x /= len;
+    midpoint.y /= len;
+    midpoint.z /= len;
+    
+    if (Math.abs(midpoint.z) < PRECISION) {
+      // Close enough to z=0
+      break;
+    }
+    
+    // Update which half to search in
+    if ((midpoint.z > 0 && p1.z > 0) || (midpoint.z < 0 && p1.z < 0)) {
+      a = midpoint;
+    } else {
+      b = midpoint;
+    }
+  }
+  
+  // Ensure point is EXACTLY on horizon (z=0)
+  if (Math.abs(midpoint.z) > PRECISION) {
+    // Project to exact z=0 plane and renormalize
+    midpoint.z = 0;
+    const len = Math.sqrt(midpoint.x * midpoint.x + midpoint.y * midpoint.y);
+    midpoint.x /= len;
+    midpoint.y /= len;
+  }
+  
+  return midpoint;
+}
+
+// Calculate horizon angle for a point
+function horizonAngle(p) {
+  return Math.atan2(p.y, p.x);
+}
+
+let rotationDegrees = 0;
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = Math.min(cx, cy) * 0.8;
+  const rotationRadians = rotationDegrees * Math.PI / 180;
+
+  // Draw Globe Background
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'white';
+  ctx.fill();
+
+  // Draw Continents
+  ctx.fillStyle = 'black';
+  
+  continents.forEach(continent => {
+    // Transform all vertices
+    const rotatedVertices = continent.map(p => 
+      rotateY(sphericalToCartesian(p.lon, p.lat), rotationRadians)
+    );
+    
+    // Check if any part is visible
+    const anyVisible = rotatedVertices.some(p => p.z > 0);
+    if (!anyVisible) return; // Skip if entirely behind
+    
+    // Build visible path with horizon intersections
+    const path = [];
+    const horizonPoints = [];
+    
+    for (let i = 0; i < rotatedVertices.length; i++) {
+      const p1 = rotatedVertices[i];
+      const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
+      
+      // Check if edge crosses horizon and compute exact intersection
+      const intersection = interpolateHorizon(p1, p2);
+      
+      // If p1 is visible, add it
+      if (p1.z > 0) {
+        path.push(p1);
+      }
+      
+      // If edge crosses horizon, add intersection point
+      if (intersection) {
+        path.push(intersection);
+        horizonPoints.push({
+          point: intersection,
+          angle: horizonAngle(intersection),
+          fromVisible: p1.z > 0,
+          toVisible: p2.z > 0
+        });
+      }
+    }
+    
+    // If no visible part, exit
+    if (path.length === 0) return;
+    
+    // Start drawing the visible part
+    ctx.beginPath();
+    let started = false;
+    
+    // Specialized handling for different horizon crossing cases
+    if (horizonPoints.length === 0) {
+      // Fully visible continent - draw normal polygon
+      for (let i = 0; i < path.length; i++) {
+        const proj = project(path[i], radius, cx, cy);
+        if (i === 0) {
+          ctx.moveTo(proj.x, proj.y);
+        } else {
+          ctx.lineTo(proj.x, proj.y);
+        }
+      }
+      ctx.closePath();
+    } 
+    else if (horizonPoints.length === 2) {
+      // Continent crosses horizon exactly twice - draw visible part plus horizon arc
+      
+      // Sort horizon points by angle
+      horizonPoints.sort((a, b) => a.angle - b.angle);
+      
+      // If points are more than π radians apart, we need to flip direction
+      let arcClockwise = true;
+      let angleDiff = horizonPoints[1].angle - horizonPoints[0].angle;
+      if (angleDiff < 0) angleDiff += 2 * Math.PI;
+      if (angleDiff > Math.PI) arcClockwise = false;
+      
+      // Build a new path to ensure correct order
+      const orderedPath = [];
+      let startIndex = -1;
+      
+      // Find a visible point to start from
+      for (let i = 0; i < path.length; i++) {
+        if (path[i].z > 0) {
+          startIndex = i;
+          break;
+        }
+      }
+      
+      // If no visible points (edge case), start from first horizon point
+      if (startIndex === -1) {
+        const h0Proj = project(horizonPoints[0].point, radius, cx, cy);
+        ctx.moveTo(h0Proj.x, h0Proj.y);
+        
+        // Add horizon arc
+        if (arcClockwise) {
+          ctx.arc(cx, cy, radius, horizonPoints[0].angle, horizonPoints[1].angle);
+        } else {
+          ctx.arc(cx, cy, radius, horizonPoints[0].angle, horizonPoints[1].angle, true);
+        }
+        
+        // Connect back to start
+        ctx.closePath();
+      } else {
+        // Start from a visible point and trace the path
+        let cur = startIndex;
+        let pointsAdded = 0;
+        
+        while (pointsAdded < path.length) {
+          const p = path[cur];
+          const proj = project(p, radius, cx, cy);
+          
+          if (!started) {
+            ctx.moveTo(proj.x, proj.y);
+            started = true;
+          } else {
+            ctx.lineTo(proj.x, proj.y);
+          }
+          
+          // Check if this is a horizon point
+          const isHorizon = Math.abs(p.z) < 0.00001;
+          
+          if (isHorizon) {
+            // We've reached a horizon point, now add the correct horizon arc
+            const thisAngle = horizonAngle(p);
+            
+            // Find which horizon point this is
+            let isFirstPoint = Math.abs(thisAngle - horizonPoints[0].angle) < 0.001;
+            let arcStart, arcEnd;
+            
+            if (isFirstPoint) {
+              arcStart = horizonPoints[0].angle;
+              arcEnd = horizonPoints[1].angle;
+            } else {
+              arcStart = horizonPoints[1].angle;
+              arcEnd = horizonPoints[0].angle;
+            }
+            
+            // When we reach a horizon point, draw arc to the other horizon point
+            // Important: here we use the ACTUAL screen arc, not just Cartesian math
+            const arcDirection = !arcClockwise; // Reverse direction
+            ctx.arc(cx, cy, radius, arcStart, arcEnd, arcDirection);
+            
+            // Skip to the other horizon point
+            break; // We completed the full shape
+          }
+          
+          cur = (cur + 1) % path.length;
+          pointsAdded++;
+        }
+      }
+    } else if (horizonPoints.length >= 4) {
+      // Complex case with multiple horizon crossings
+      // Draw visible parts and connect with horizon arcs where needed
+      
+      // Sort horizon points by angle for easier processing
+      horizonPoints.sort((a, b) => a.angle - b.angle);
+      
+      // Find pairs of entry/exit points
+      const pairs = [];
+      for (let i = 0; i < horizonPoints.length; i += 2) {
+        if (i + 1 < horizonPoints.length) {
+          pairs.push([horizonPoints[i], horizonPoints[(i + 1) % horizonPoints.length]]);
+        }
+      }
+      
+      // Draw each visible segment with horizon arcs between
+      pairs.forEach(pair => {
+        const [entry, exit] = pair;
+        
+        // Draw arc between exit and entry
+        const entryProj = project(entry.point, radius, cx, cy);
+        
+        if (!started) {
+          ctx.moveTo(entryProj.x, entryProj.y);
+          started = true;
+        } else {
+          ctx.lineTo(entryProj.x, entryProj.y);
+        }
+        
+        // Find path segments between entry and exit
+        // This is complex - we'd need to trace the visible path
+        
+        // Draw the exit point
+        const exitProj = project(exit.point, radius, cx, cy);
+        ctx.lineTo(exitProj.x, exitProj.y);
+        
+        // Add arc from exit to next entry
+        let arcStart = exit.angle;
+        let arcEnd = pairs[(pairs.indexOf(pair) + 1) % pairs.length][0].angle;
+        let angleDiff = arcEnd - arcStart;
+        if (angleDiff < 0) angleDiff += 2 * Math.PI;
+        
+        const arcClockwise = angleDiff > Math.PI;
+        ctx.arc(cx, cy, radius, arcStart, arcEnd, arcClockwise);
+      });
+    }
+    
+    // Fill the path
+    ctx.fill();
+  });
+
+  rotationDegrees += 0.2;
+  if (rotationDegrees >= 360) rotationDegrees -= 360;
+
+  requestAnimationFrame(draw);
+}
+
+// Initial draw
+draw();
+</script>
+
+</body>
+</html>
