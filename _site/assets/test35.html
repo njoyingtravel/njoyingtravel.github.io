@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rotating Globe - Fixed Horizon Snapping (Subdivision Enhanced)</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: black; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="globeCanvas"></canvas>
+
+<!-- Link to the continents.js file -->
+<script src="continents.js"></script>
+
+<script>
+const canvas = document.getElementById('globeCanvas');
+const ctx = canvas.getContext('2d');
+
+let rotationDegrees = 0; // Horizontal rotation degrees
+let tiltDegrees = 0;     // Vertical tilt degrees
+let isDragging = false; // Check if mouse is pressed
+let lastMouseX = 0; // Store last mouse X position for rotation
+let lastMouseY = 0; // Store last mouse Y position for rotation
+let autoRotate = true; // Flag to control auto-rotation
+
+// Resize the canvas to fill the entire screen
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Spherical to Cartesian conversion for globe projection
+function sphericalToCartesian(lon, lat) {
+  const rad = Math.PI / 180;
+  const lonRad = lon * rad;
+  const latRad = lat * rad;
+  const cosLat = Math.cos(latRad);
+  return {
+    x: cosLat * Math.sin(lonRad),
+    y: Math.sin(latRad),
+    z: cosLat * Math.cos(lonRad)
+  };
+}
+
+function rotateY(p, angleRad) {
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  return {
+    x: p.x * cosA + p.z * sinA,
+    y: p.y,
+    z: -p.x * sinA + p.z * cosA
+  };
+}
+
+function rotateX(p, angleRad) {
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  return {
+    x: p.x,
+    y: p.y * cosA - p.z * sinA,
+    z: p.y * sinA + p.z * cosA
+  };
+}
+
+function project(p, radius, cx, cy) {
+  return {
+    x: cx + p.x * radius,
+    y: cy - p.y * radius
+  };
+}
+
+function findHorizonIntersection(p1, p2) {
+  if ((p1.z >= 0 && p2.z >= 0) || (p1.z < 0 && p2.z < 0)) return null;
+
+  const dz = p2.z - p1.z;
+  if (Math.abs(dz) < 1e-9) return null;
+
+  const t = (0 - p1.z) / (p2.z - p1.z);
+  const intersection = {
+    x: p1.x + (p2.x - p1.x) * t,
+    y: p1.y + (p2.y - p1.y) * t,
+    z: 0
+  };
+
+  const len = Math.hypot(intersection.x, intersection.y);
+  if (len < 1e-9) {
+    return { point: { x: 1, y: 0, z: 0 }, type: 'intersection' };
+  }
+  intersection.x /= len;
+  intersection.y /= len;
+  return { point: intersection, type: 'intersection' };
+}
+
+function subdivideContinent(continent, maxSegmentDegrees = 10) {
+  const subdivided = [];
+  for (let i = 0; i < continent.length; i++) {
+    const current = continent[i];
+    const next = continent[(i + 1) % continent.length];
+
+    subdivided.push(current);
+
+    const dLon = next.lon - current.lon;
+    const dLat = next.lat - current.lat;
+    const dist = Math.hypot(dLon, dLat);
+
+    const segments = Math.ceil(dist / maxSegmentDegrees);
+
+    for (let j = 1; j < segments; j++) {
+      const t = j / segments;
+      subdivided.push({
+        lon: current.lon + dLon * t,
+        lat: current.lat + dLat * t
+      });
+    }
+  }
+  return subdivided;
+}
+
+// Preprocess the continents for smoother rendering
+const subdividedContinents = continents.map(continent => subdivideContinent(continent, 2));
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = Math.min(cx, cy) * 0.8;
+  const rotationRadians = rotationDegrees * Math.PI / 180;
+  const tiltRadians = tiltDegrees * Math.PI / 180;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'white'; // Keep original colors
+  ctx.fill();
+
+  ctx.fillStyle = 'black';
+
+  subdividedContinents.forEach(continent => {
+    const rotatedVertices = continent
+      .filter(p => p.lat > -84.351) // ⬅️ SKIP points too close to the South Pole
+      .map(p => rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians));
+      
+    const pathSegments = [];
+    for (let i = 0; i < rotatedVertices.length; i++) {
+      const p1 = rotatedVertices[i];
+      const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
+      const intersection = findHorizonIntersection(p1, p2);
+
+      if (p1.z >= 0) {
+        pathSegments.push({ point: p1, type: 'vertex' });
+      }
+      if (intersection) {
+        pathSegments.push(intersection);
+        if (p2.z < 0) continue; // Skip to next vertex if p2 is behind
+      }
+    }
+
+    if (pathSegments.length < 3) return;
+
+    ctx.beginPath();
+    const firstProj = project(pathSegments[0].point, radius, cx, cy);
+    ctx.moveTo(firstProj.x, firstProj.y);
+
+    for (let i = 1; i < pathSegments.length; i++) {
+      const curr = pathSegments[i];
+      const prev = pathSegments[i - 1];
+      const projCurr = project(curr.point, radius, cx, cy);
+      const projPrev = project(prev.point, radius, cx, cy);
+
+      if (prev.type === 'intersection' && curr.type === 'intersection') {
+        const startAngle = Math.atan2(projPrev.y - cy, projPrev.x - cx);
+        const endAngle = Math.atan2(projCurr.y - cy, projCurr.x - cx);
+        const crossZ = prev.point.x * curr.point.y - prev.point.y * curr.point.x;
+        const ccw = crossZ > 0;
+        ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
+      } else {
+        ctx.lineTo(projCurr.x, projCurr.y);
+      }
+    }
+
+    // Close the path by connecting back to the first point if needed
+    const last = pathSegments[pathSegments.length - 1];
+    const first = pathSegments[0];
+    if (last.type === 'intersection' && first.type === 'intersection') {
+      const projLast = project(last.point, radius, cx, cy);
+      const projFirst = project(first.point, radius, cx, cy);
+      const startAngle = Math.atan2(projLast.y - cy, projLast.x - cx);
+      const endAngle = Math.atan2(projFirst.y - cy, projFirst.x - cx);
+      const crossZ = last.point.x * first.point.y - last.point.y * first.point.x;
+      const ccw = crossZ > 0;
+      ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
+    } else {
+      ctx.lineTo(firstProj.x, firstProj.y);
+    }
+
+    ctx.closePath();
+    ctx.fill();
+  });
+
+  if (autoRotate) {
+    rotationDegrees += 0.1;
+    if (rotationDegrees >= 360) rotationDegrees -= 360;
+  }
+
+  requestAnimationFrame(draw);
+}
+
+// Handle mouse events for controlling rotation
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  autoRotate = false;  // Stop automatic rotation
+});
+
+canvas.addEventListener('mouseup', () => {
+  isDragging = false;
+  autoRotate = false;  // Ensure auto-rotation stays off after the mouse release
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (isDragging) {
+    const deltaX = e.clientX - lastMouseX;
+    const deltaY = -(e.clientY - lastMouseY);
+
+    rotationDegrees += deltaX * 0.1; // Adjust the sensitivity here (horizontal movement)
+    tiltDegrees -= deltaY * 0.1;    // Invert vertical mouse movement
+
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+  }
+});
+
+draw();
+</script>
+</body>
+</html>
