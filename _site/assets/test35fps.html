@@ -2,14 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Rotating Globe - Contours Only</title>
+  <title>Rotating Globe - Contours Only + FPS</title>
   <style>
     body { margin: 0; overflow: hidden; background: black; }
     canvas { display: block; }
+    #fpsCounter {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.5);
+      color: lime;
+      font-family: monospace;
+      font-size: 14px;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
 <canvas id="globeCanvas"></canvas>
+<div id="fpsCounter">FPS: 0</div>
 
 <!-- Link to the continents.js file -->
 <script src="continents.js"></script>
@@ -17,6 +29,7 @@
 <script>
 const canvas = document.getElementById('globeCanvas');
 const ctx = canvas.getContext('2d');
+const fpsCounter = document.getElementById('fpsCounter');
 
 let rotationDegrees = 0;
 let tiltDegrees = 0;
@@ -24,6 +37,11 @@ let isDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
 let autoRotate = true;
+
+// FPS calculation
+let frameCount = 0;
+let lastTime = performance.now();
+let fps = 0;
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -123,7 +141,7 @@ function draw() {
   const rotationRadians = rotationDegrees * Math.PI / 180;
   const tiltRadians = tiltDegrees * Math.PI / 180;
 
-  // Fill the globe with solid white
+  // Fill the globe
   ctx.fillStyle = 'white';
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -201,9 +219,20 @@ function draw() {
     if (rotationDegrees >= 360) rotationDegrees -= 360;
   }
 
+  // FPS counting
+  frameCount++;
+  const now = performance.now();
+  if (now - lastTime >= 1000) {
+    fps = frameCount;
+    frameCount = 0;
+    lastTime = now;
+    fpsCounter.textContent = `FPS: ${fps}`;
+  }
+
   requestAnimationFrame(draw);
 }
 
+// Mouse control
 canvas.addEventListener('mousedown', (e) => {
   isDragging = true;
   lastMouseX = e.clientX;

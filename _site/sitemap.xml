@@ -179,6 +179,13 @@
     
     
         <url>
+            <loc>/Turcja-Stambul/</loc>
+            <changefreq>weekly</changefreq>
+            <priority>0.8</priority>
+            <lastmod>2025-02-27</lastmod>
+        </url>
+    
+        <url>
             <loc>/welcome-to-the-desert-of-the-real/view-all/</loc>
             <changefreq>weekly</changefreq>
             <priority>0.8</priority>
