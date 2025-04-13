@@ -2,14 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Rotating Globe - Contours Only</title>
+  <title>Rotating Globe - Contours Only + Path2D Cached + FPS</title>
   <style>
     body { margin: 0; overflow: hidden; background: black; }
     canvas { display: block; }
+    #fpsCounter {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.5);
+      color: lime;
+      font-family: monospace;
+      font-size: 14px;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
 <canvas id="globeCanvas"></canvas>
+<div id="fpsCounter">FPS: 0</div>
 
 <!-- Link to the continents.js file -->
 <script src="continents.js"></script>
@@ -17,6 +29,7 @@
 <script>
 const canvas = document.getElementById('globeCanvas');
 const ctx = canvas.getContext('2d');
+const fpsCounter = document.getElementById('fpsCounter');
 
 let rotationDegrees = 0;
 let tiltDegrees = 0;
@@ -24,6 +37,13 @@ let isDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
 let autoRotate = true;
+
+let cachedPaths = [];
+
+// FPS calculation
+let frameCount = 0;
+let lastTime = performance.now();
+let fps = 0;
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -71,26 +91,7 @@ function project(p, radius, cx, cy) {
   };
 }
 
-function findHorizonIntersection(p1, p2) {
-  if ((p1.z >= 0 && p2.z >= 0) || (p1.z < 0 && p2.z < 0)) return null;
-  const dz = p2.z - p1.z;
-  if (Math.abs(dz) < 1e-9) return null;
-  const t = (0 - p1.z) / dz;
-  const intersection = {
-    x: p1.x + (p2.x - p1.x) * t,
-    y: p1.y + (p2.y - p1.y) * t,
-    z: 0
-  };
-  const len = Math.hypot(intersection.x, intersection.y);
-  if (len < 1e-9) {
-    return { point: { x: 1, y: 0, z: 0 }, type: 'intersection' };
-  }
-  intersection.x /= len;
-  intersection.y /= len;
-  return { point: intersection, type: 'intersection' };
-}
-
-function subdivideContinent(continent, maxSegmentDegrees = 10) {
+function subdivideContinent(continent, maxSegmentDegrees = 2) {
   const subdivided = [];
   for (let i = 0; i < continent.length; i++) {
     const current = continent[i];
@@ -111,11 +112,12 @@ function subdivideContinent(continent, maxSegmentDegrees = 10) {
   return subdivided;
 }
 
-// Preprocess the continents for smoother rendering
+// Preprocess continents
 const subdividedContinents = continents.map(continent => subdivideContinent(continent, 2));
 
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+// 🚀 NEW: Generate all the rotated Path2D shapes
+function generateCachedPaths() {
+  cachedPaths = [];
 
   const cx = canvas.width / 2;
   const cy = canvas.height / 2;
@@ -123,82 +125,65 @@ function draw() {
   const rotationRadians = rotationDegrees * Math.PI / 180;
   const tiltRadians = tiltDegrees * Math.PI / 180;
 
-  // Fill the globe with solid white
+  subdividedContinents.forEach(continent => {
+    const path = new Path2D();
+    const rotatedVertices = continent
+      .filter(p => p.lat > -84.351)
+      .map(p => rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians));
+
+    if (rotatedVertices.length === 0) return;
+
+    const first = rotatedVertices[0];
+    const projFirst = project(first, radius, cx, cy);
+    path.moveTo(projFirst.x, projFirst.y);
+
+    for (let i = 1; i < rotatedVertices.length; i++) {
+      const p = rotatedVertices[i];
+      const proj = project(p, radius, cx, cy);
+      path.lineTo(proj.x, proj.y);
+    }
+
+    path.closePath();
+    cachedPaths.push(path);
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = Math.min(cx, cy) * 0.8;
+
+  // Fill the globe
   ctx.fillStyle = 'white';
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  // Set stroke style for coastlines
+  // Draw cached coastlines
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 1;
   ctx.lineJoin = 'round';
 
-  // Draw continents
-  subdividedContinents.forEach(continent => {
-    const rotatedVertices = continent
-      .filter(p => p.lat > -84.351)
-      .map(p => rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians));
-      
-    const pathSegments = [];
-    for (let i = 0; i < rotatedVertices.length; i++) {
-      const p1 = rotatedVertices[i];
-      const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
-      const intersection = findHorizonIntersection(p1, p2);
-
-      if (p1.z >= 0) {
-        pathSegments.push({ point: p1, type: 'vertex' });
-      }
-      if (intersection) {
-        pathSegments.push(intersection);
-        if (p2.z < 0) continue;
-      }
-    }
-
-    if (pathSegments.length < 3) return;
-
-    ctx.beginPath();
-    const firstProj = project(pathSegments[0].point, radius, cx, cy);
-    ctx.moveTo(firstProj.x, firstProj.y);
-
-    for (let i = 1; i < pathSegments.length; i++) {
-      const curr = pathSegments[i];
-      const prev = pathSegments[i - 1];
-      const projCurr = project(curr.point, radius, cx, cy);
-      const projPrev = project(prev.point, radius, cx, cy);
-
-      if (prev.type === 'intersection' && curr.type === 'intersection') {
-        const startAngle = Math.atan2(projPrev.y - cy, projPrev.x - cx);
-        const endAngle = Math.atan2(projCurr.y - cy, projCurr.x - cx);
-        const crossZ = prev.point.x * curr.point.y - prev.point.y * curr.point.x;
-        const ccw = crossZ > 0;
-        ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-      } else {
-        ctx.lineTo(projCurr.x, projCurr.y);
-      }
-    }
-
-    const last = pathSegments[pathSegments.length - 1];
-    const first = pathSegments[0];
-    if (last.type === 'intersection' && first.type === 'intersection') {
-      const projLast = project(last.point, radius, cx, cy);
-      const projFirst = project(first.point, radius, cx, cy);
-      const startAngle = Math.atan2(projLast.y - cy, projLast.x - cx);
-      const endAngle = Math.atan2(projFirst.y - cy, projFirst.x - cx);
-      const crossZ = last.point.x * first.point.y - last.point.y * first.point.x;
-      const ccw = crossZ > 0;
-      ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-    } else {
-      ctx.lineTo(firstProj.x, firstProj.y);
-    }
-
-    ctx.closePath();
-    ctx.stroke();
+  cachedPaths.forEach(path => {
+    ctx.stroke(path);
   });
 
   if (autoRotate) {
     rotationDegrees += 0.1;
     if (rotationDegrees >= 360) rotationDegrees -= 360;
+    generateCachedPaths(); // 🔥 REBUILD paths when rotating
+  }
+
+  // FPS counting
+  frameCount++;
+  const now = performance.now();
+  if (now - lastTime >= 1000) {
+    fps = frameCount;
+    frameCount = 0;
+    lastTime = now;
+    fpsCounter.textContent = `FPS: ${fps}`;
   }
 
   requestAnimationFrame(draw);
@@ -226,9 +211,12 @@ canvas.addEventListener('mousemove', (e) => {
 
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
+
+    generateCachedPaths(); // 🔥 REBUILD paths while dragging
   }
 });
 
+generateCachedPaths(); // Initial path generation
 draw();
 </script>
 </body>

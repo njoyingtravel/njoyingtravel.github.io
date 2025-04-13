@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Rotating Globe - Contours Only</title>
+  <title>Rotating Globe - Full Borders</title>
   <style>
     body { margin: 0; overflow: hidden; background: black; }
     canvas { display: block; }
@@ -71,26 +71,7 @@ function project(p, radius, cx, cy) {
   };
 }
 
-function findHorizonIntersection(p1, p2) {
-  if ((p1.z >= 0 && p2.z >= 0) || (p1.z < 0 && p2.z < 0)) return null;
-  const dz = p2.z - p1.z;
-  if (Math.abs(dz) < 1e-9) return null;
-  const t = (0 - p1.z) / dz;
-  const intersection = {
-    x: p1.x + (p2.x - p1.x) * t,
-    y: p1.y + (p2.y - p1.y) * t,
-    z: 0
-  };
-  const len = Math.hypot(intersection.x, intersection.y);
-  if (len < 1e-9) {
-    return { point: { x: 1, y: 0, z: 0 }, type: 'intersection' };
-  }
-  intersection.x /= len;
-  intersection.y /= len;
-  return { point: intersection, type: 'intersection' };
-}
-
-function subdivideContinent(continent, maxSegmentDegrees = 10) {
+function subdivideContinent(continent, maxSegmentDegrees = 2) {
   const subdivided = [];
   for (let i = 0; i < continent.length; i++) {
     const current = continent[i];
@@ -123,79 +104,52 @@ function draw() {
   const rotationRadians = rotationDegrees * Math.PI / 180;
   const tiltRadians = tiltDegrees * Math.PI / 180;
 
-  // Fill the globe with solid white
+  // Fill the background
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Save canvas state
+  ctx.save();
+
+  // Clip to a circular globe
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.clip();
+
+  // Fill the globe
   ctx.fillStyle = 'white';
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  // Set stroke style for coastlines
+  // Set stroke style for borders
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 1;
   ctx.lineJoin = 'round';
 
   // Draw continents
   subdividedContinents.forEach(continent => {
-    const rotatedVertices = continent
-      .filter(p => p.lat > -84.351)
-      .map(p => rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians));
-      
-    const pathSegments = [];
-    for (let i = 0; i < rotatedVertices.length; i++) {
-      const p1 = rotatedVertices[i];
-      const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
-      const intersection = findHorizonIntersection(p1, p2);
-
-      if (p1.z >= 0) {
-        pathSegments.push({ point: p1, type: 'vertex' });
-      }
-      if (intersection) {
-        pathSegments.push(intersection);
-        if (p2.z < 0) continue;
-      }
-    }
-
-    if (pathSegments.length < 3) return;
+    const rotatedVertices = continent.map(p => 
+      rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians)
+    );
 
     ctx.beginPath();
-    const firstProj = project(pathSegments[0].point, radius, cx, cy);
-    ctx.moveTo(firstProj.x, firstProj.y);
+    const first = project(rotatedVertices[0], radius, cx, cy);
+    ctx.moveTo(first.x, first.y);
 
-    for (let i = 1; i < pathSegments.length; i++) {
-      const curr = pathSegments[i];
-      const prev = pathSegments[i - 1];
-      const projCurr = project(curr.point, radius, cx, cy);
-      const projPrev = project(prev.point, radius, cx, cy);
-
-      if (prev.type === 'intersection' && curr.type === 'intersection') {
-        const startAngle = Math.atan2(projPrev.y - cy, projPrev.x - cx);
-        const endAngle = Math.atan2(projCurr.y - cy, projCurr.x - cx);
-        const crossZ = prev.point.x * curr.point.y - prev.point.y * curr.point.x;
-        const ccw = crossZ > 0;
-        ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-      } else {
-        ctx.lineTo(projCurr.x, projCurr.y);
-      }
-    }
-
-    const last = pathSegments[pathSegments.length - 1];
-    const first = pathSegments[0];
-    if (last.type === 'intersection' && first.type === 'intersection') {
-      const projLast = project(last.point, radius, cx, cy);
-      const projFirst = project(first.point, radius, cx, cy);
-      const startAngle = Math.atan2(projLast.y - cy, projLast.x - cx);
-      const endAngle = Math.atan2(projFirst.y - cy, projFirst.x - cx);
-      const crossZ = last.point.x * first.point.y - last.point.y * first.point.x;
-      const ccw = crossZ > 0;
-      ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-    } else {
-      ctx.lineTo(firstProj.x, firstProj.y);
+    for (let i = 1; i < rotatedVertices.length; i++) {
+      const proj = project(rotatedVertices[i], radius, cx, cy);
+      ctx.lineTo(proj.x, proj.y);
     }
 
     ctx.closePath();
     ctx.stroke();
   });
 
+  // Restore canvas state (remove clipping)
+  ctx.restore();
+
+  // Auto-rotate
   if (autoRotate) {
     rotationDegrees += 0.1;
     if (rotationDegrees >= 360) rotationDegrees -= 360;
@@ -204,6 +158,7 @@ function draw() {
   requestAnimationFrame(draw);
 }
 
+// Mouse drag to control rotation
 canvas.addEventListener('mousedown', (e) => {
   isDragging = true;
   lastMouseX = e.clientX;

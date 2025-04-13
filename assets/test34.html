@@ -140,10 +140,10 @@ function draw() {
   ctx.fillStyle = 'black';
 
   subdividedContinents.forEach(continent => {
-    const rotatedVertices = continent.map(p =>
-      rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians)
-    );
-
+    const rotatedVertices = continent
+      .filter(p => p.lat > -84.351) // ⬅️ SKIP points too close to the South Pole
+      .map(p => rotateY(rotateX(sphericalToCartesian(p.lon, p.lat), tiltRadians), rotationRadians));
+      
     const pathSegments = [];
     for (let i = 0; i < rotatedVertices.length; i++) {
       const p1 = rotatedVertices[i];
