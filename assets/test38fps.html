@@ -24,7 +24,11 @@
 <div id="fpsCounter">FPS: 0</div>
 
 <!-- Link to the continents.js file -->
-<script src="continents.js"></script>
+<!-- <script src="continents.js"></script>
+
+<script src="borders.js"></script> -->
+
+<script src="points.js"></script>
 
 <script>
 const canvas = document.getElementById('globeCanvas');
@@ -122,8 +126,37 @@ function subdivideContinent(continent, maxSegmentDegrees = 10) {
   return subdivided;
 }
 
+function subdivideBorderLine(line, maxSegmentDegrees = 10) {
+  const subdivided = [];
+  for (let i = 0; i < line.length - 1; i++) {  // note: no wrapping!
+    const current = line[i];
+    const next = line[i + 1];
+    subdivided.push(current);
+    const dLon = next.lon - current.lon;
+    const dLat = next.lat - current.lat;
+    const dist = Math.hypot(dLon, dLat);
+    const segments = Math.ceil(dist / maxSegmentDegrees);
+    for (let j = 1; j < segments; j++) {
+      const t = j / segments;
+      subdivided.push({
+        lon: current.lon + dLon * t,
+        lat: current.lat + dLat * t
+      });
+    }
+  }
+  // include the final point
+  if (line.length > 0) {
+    subdivided.push(line[line.length - 1]);
+  }
+  return subdivided;
+}
+
 // Preprocess continents
-const subdividedContinents = continents.map(continent => subdivideContinent(continent, 2));
+// const subdividedContinents = continents.map(continent => subdivideContinent(continent, 2));
+
+// const subdividedBorders = borders.map(border => subdivideBorderLine(border, 2));
+
+// const subdividedPoints = points.map(points => subdivideBorderLine(border, 2));
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -144,85 +177,142 @@ function draw() {
   ctx.lineWidth = 1;
   ctx.lineJoin = 'round';
 
-  subdividedContinents.forEach(continent => {
-    const rotatedVertices = [];
-    for (let i = 0; i < continent.length; i++) {
-      const p = continent[i];
-      if (p.lat > -84.351) {
-        const sph = sphericalToCartesian(p.lon, p.lat);
-        const rotated = rotateY(rotateX(sph, tiltRadians), rotationRadians);
-        rotatedVertices.push(rotated);
-      }
-    }
+  // subdividedContinents.forEach(continent => {
+  //   const rotatedVertices = [];
+  //   for (let i = 0; i < continent.length; i++) {
+  //     const p = continent[i];
+  //     if (p.lat > -84.351) {
+  //       const sph = sphericalToCartesian(p.lon, p.lat);
+  //       const rotated = rotateY(rotateX(sph, tiltRadians), rotationRadians);
+  //       rotatedVertices.push(rotated);
+  //     }
+  //   }
 
-    const pathSegments = [];
-    for (let i = 0; i < rotatedVertices.length; i++) {
-      const p1 = rotatedVertices[i];
-      const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
-      const intersection = findHorizonIntersection(p1, p2);
+  //   const pathSegments = [];
+  //   for (let i = 0; i < rotatedVertices.length; i++) {
+  //     const p1 = rotatedVertices[i];
+  //     const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
+  //     const intersection = findHorizonIntersection(p1, p2);
 
-      if (p1[2] >= 0) {
-        pathSegments.push({ point: p1, type: 'vertex' });
-      }
-      if (intersection) {
-        pathSegments.push(intersection);
-        if (p2[2] < 0) continue;
-      }
-    }
+  //     if (p1[2] >= 0) {
+  //       pathSegments.push({ point: p1, type: 'vertex' });
+  //     }
+  //     if (intersection) {
+  //       pathSegments.push(intersection);
+  //       if (p2[2] < 0) continue;
+  //     }
+  //   }
 
-    if (pathSegments.length < 3) return;
+  //   if (pathSegments.length < 3) return;
 
-    ctx.beginPath();
-    const first = pathSegments[0].point;
-    const fx = cx + first[0] * radius;
-    const fy = cy - first[1] * radius;
-    ctx.moveTo(fx, fy);
+  //   ctx.beginPath();
+  //   const first = pathSegments[0].point;
+  //   const fx = cx + first[0] * radius;
+  //   const fy = cy - first[1] * radius;
+  //   ctx.moveTo(fx, fy);
 
-    for (let i = 1; i < pathSegments.length; i++) {
-      const curr = pathSegments[i];
-      const prev = pathSegments[i - 1];
-      const currPt = curr.point;
-      const prevPt = prev.point;
+  //   for (let i = 1; i < pathSegments.length; i++) {
+  //     const curr = pathSegments[i];
+  //     const prev = pathSegments[i - 1];
+  //     const currPt = curr.point;
+  //     const prevPt = prev.point;
 
-      const currX = cx + currPt[0] * radius;
-      const currY = cy - currPt[1] * radius;
-      const prevX = cx + prevPt[0] * radius;
-      const prevY = cy - prevPt[1] * radius;
+  //     const currX = cx + currPt[0] * radius;
+  //     const currY = cy - currPt[1] * radius;
+  //     const prevX = cx + prevPt[0] * radius;
+  //     const prevY = cy - prevPt[1] * radius;
 
-      if (prev.type === 'intersection' && curr.type === 'intersection') {
-        const startAngle = Math.atan2(prevY - cy, prevX - cx);
-        const endAngle = Math.atan2(currY - cy, currX - cx);
-        const crossZ = prevPt[0] * currPt[1] - prevPt[1] * currPt[0];
-        const ccw = crossZ > 0;
-        ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-      } else {
-        ctx.lineTo(currX, currY);
-      }
-    }
+  //     if (prev.type === 'intersection' && curr.type === 'intersection') {
+  //       const startAngle = Math.atan2(prevY - cy, prevX - cx);
+  //       const endAngle = Math.atan2(currY - cy, currX - cx);
+  //       const crossZ = prevPt[0] * currPt[1] - prevPt[1] * currPt[0];
+  //       const ccw = crossZ > 0;
+  //       ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
+  //     } else {
+  //       ctx.lineTo(currX, currY);
+  //     }
+  //   }
 
-    const last = pathSegments[pathSegments.length - 1];
-    const firstPt = pathSegments[0];
-    if (last.type === 'intersection' && firstPt.type === 'intersection') {
-      const lastPt = last.point;
-      const firstP = firstPt.point;
+  //   const last = pathSegments[pathSegments.length - 1];
+  //   const firstPt = pathSegments[0];
+  //   if (last.type === 'intersection' && firstPt.type === 'intersection') {
+  //     const lastPt = last.point;
+  //     const firstP = firstPt.point;
 
-      const lastX = cx + lastPt[0] * radius;
-      const lastY = cy - lastPt[1] * radius;
-      const firstX = cx + firstP[0] * radius;
-      const firstY = cy - firstP[1] * radius;
+  //     const lastX = cx + lastPt[0] * radius;
+  //     const lastY = cy - lastPt[1] * radius;
+  //     const firstX = cx + firstP[0] * radius;
+  //     const firstY = cy - firstP[1] * radius;
 
-      const startAngle = Math.atan2(lastY - cy, lastX - cx);
-      const endAngle = Math.atan2(firstY - cy, firstX - cx);
-      const crossZ = lastPt[0] * firstP[1] - lastPt[1] * firstP[0];
-      const ccw = crossZ > 0;
-      ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-    } else {
-      ctx.lineTo(fx, fy);
-    }
+  //     const startAngle = Math.atan2(lastY - cy, lastX - cx);
+  //     const endAngle = Math.atan2(firstY - cy, firstX - cx);
+  //     const crossZ = lastPt[0] * firstP[1] - lastPt[1] * firstP[0];
+  //     const ccw = crossZ > 0;
+  //     ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
+  //   } else {
+  //     ctx.lineTo(fx, fy);
+  //   }
 
-    ctx.closePath();
-    ctx.stroke();
-  });
+  //   ctx.closePath();
+  //   ctx.stroke();
+  // });
+
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 0.5;
+
+  points.forEach(borderLine => { // Outer .forEach loop callback starts {
+      ctx.beginPath();
+      let lastX = null, lastY = null;
+
+      borderLine.forEach((p, i) => { // Inner .forEach loop callback starts {
+            const sph = sphericalToCartesian(p.lon, p.lat);
+            const rotated = rotateY(rotateX(sph, tiltRadians), rotationRadians);
+
+            if (rotated[2] >= 0) {  // if point is on the front side: starts {
+                const x = cx + rotated[0] * radius;
+                const y = cy - rotated[1] * radius;
+
+                if (lastX !== null && lastY !== null) { // if it's not the first visible point: starts {
+                    const dx = Math.abs(x - lastX);
+                    const dy = Math.abs(y - lastY);
+                    // let thresholdX;
+                    // let thresholdY;
+
+                    //antarctida hack
+                    if (p.lat < -80 && (dx > 10 || dy > 10)) {
+                      ctx.moveTo(x, y)
+                    } else {
+                      ctx.lineTo(x, y);
+                    }
+
+
+                    ctx.lineTo(x, y);
+                } else { // else (it IS the first visible point): starts {
+                    ctx.moveTo(x, y);
+
+                    // const hue = Math.floor(Math.random() * 360);       // any hue 0–360
+                    // const saturation = 100;                            // full saturation
+                    // const lightness = 50;                              // mid lightness for vivid color
+
+                    // ctx.strokeStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                } // else (it IS the first visible point): ends }
+
+                lastX = x;
+                lastY = y;
+            } 
+
+            else { // else (point is on the back side): starts {
+                lastX = null;
+                lastY = null;
+            } // else (point is on the back side): ends }
+
+
+
+         }); // Inner .forEach loop callback ends }, Inner .forEach method call ends )
+
+      ctx.stroke();
+  }); // Outer .forEach loop callback ends }, Outer .forEach method call ends )
+
 
   if (autoRotate) {
     rotationDegrees += 0.1;
