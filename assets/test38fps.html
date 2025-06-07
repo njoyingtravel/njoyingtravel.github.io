@@ -40,7 +40,20 @@ let tiltDegrees = 0;
 let isDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
-let autoRotate = true;
+let autoRotate = false;
+
+let targetRotation = rotationDegrees;
+let targetTilt = tiltDegrees;
+let animationProgress = 1; // 1 = done, 0 = just started
+
+let animationStartTime = 0;
+let animationDuration = 1000;
+let startRotation = 0;
+let startTilt = 0;
+
+let arcStartLatLon = null;
+let arcEndLatLon = null;
+let cameraPath = [];
 
 // FPS measurement
 let frameCount = 0;
@@ -86,77 +99,109 @@ function rotateX(p, angleRad) {
   ];
 }
 
-function findHorizonIntersection(p1, p2) {
-  if ((p1[2] >= 0 && p2[2] >= 0) || (p1[2] < 0 && p2[2] < 0)) return null;
-  const dz = p2[2] - p1[2];
-  if (Math.abs(dz) < 1e-9) return null;
-  const t = (0 - p1[2]) / dz;
-  const intersection = [
-    p1[0] + (p2[0] - p1[0]) * t,
-    p1[1] + (p2[1] - p1[1]) * t,
-    0
-  ];
-  const len = Math.hypot(intersection[0], intersection[1]);
-  if (len < 1e-9) {
-    return { point: [1, 0, 0], type: 'intersection' };
-  }
-  intersection[0] /= len;
-  intersection[1] /= len;
-  return { point: intersection, type: 'intersection' };
+function interpolateGreatCircle(start, end, t) {
+  const toRad = Math.PI / 180;
+  const toDeg = 180 / Math.PI;
+
+  const φ1 = start.lat * toRad;
+  const λ1 = start.lon * toRad;
+  const φ2 = end.lat * toRad;
+  const λ2 = end.lon * toRad;
+
+  const Δφ = φ2 - φ1;
+  const Δλ = λ2 - λ1;
+
+  const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  const δ = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  if (δ === 0) return { lat: start.lat, lon: start.lon };
+
+  const A = Math.sin((1 - t) * δ) / Math.sin(δ);
+  const B = Math.sin(t * δ) / Math.sin(δ);
+
+  const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
+  const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
+  const z = A * Math.sin(φ1) + B * Math.sin(φ2);
+
+  const φ = Math.atan2(z, Math.sqrt(x * x + y * y));
+  const λ = Math.atan2(y, x);
+
+  return { lat: φ * toDeg, lon: λ * toDeg };
 }
 
-function subdivideContinent(continent, maxSegmentDegrees = 10) {
-  const subdivided = [];
-  for (let i = 0; i < continent.length; i++) {
-    const current = continent[i];
-    const next = continent[(i + 1) % continent.length];
-    subdivided.push(current);
-    const dLon = next.lon - current.lon;
-    const dLat = next.lat - current.lat;
-    const dist = Math.hypot(dLon, dLat);
-    const segments = Math.ceil(dist / maxSegmentDegrees);
-    for (let j = 1; j < segments; j++) {
-      const t = j / segments;
-      subdivided.push({
-        lon: current.lon + dLon * t,
-        lat: current.lat + dLat * t
-      });
-    }
-  }
-  return subdivided;
+function curvedInterpolationDirectional(start, end, t) {
+  const mid = interpolateGreatCircle(start, end, 0.5);
+
+  // Compute shortest deltaLon (wrap around the globe)
+  let deltaLon = end.lon - start.lon;
+  if (deltaLon > 180) deltaLon -= 360;
+  if (deltaLon < -180) deltaLon += 360;
+
+  // Curve proportional to E-W direction, but not extreme
+  const curveStrength = Math.sin(t * Math.PI); // peak at t = 0.5
+  const latOffset = curveStrength * (deltaLon / 180) * 10; // max 10° offset
+
+  const curvedMid = {
+    lat: mid.lat + latOffset,
+    lon: mid.lon
+  };
+
+  // Double interpolation to simulate bending path
+  const firstLeg = interpolateGreatCircle(start, curvedMid, t);
+  const secondLeg = interpolateGreatCircle(curvedMid, end, t);
+  return interpolateGreatCircle(firstLeg, secondLeg, t);
 }
 
-function subdivideBorderLine(line, maxSegmentDegrees = 10) {
-  const subdivided = [];
-  for (let i = 0; i < line.length - 1; i++) {  // note: no wrapping!
-    const current = line[i];
-    const next = line[i + 1];
-    subdivided.push(current);
-    const dLon = next.lon - current.lon;
-    const dLat = next.lat - current.lat;
-    const dist = Math.hypot(dLon, dLat);
-    const segments = Math.ceil(dist / maxSegmentDegrees);
-    for (let j = 1; j < segments; j++) {
-      const t = j / segments;
-      subdivided.push({
-        lon: current.lon + dLon * t,
-        lat: current.lat + dLat * t
-      });
-    }
-  }
-  // include the final point
-  if (line.length > 0) {
-    subdivided.push(line[line.length - 1]);
-  }
-  return subdivided;
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in kilometers
+  const toRad = angle => angle * Math.PI / 180;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
 }
 
-// Preprocess continents
-// const subdividedContinents = continents.map(continent => subdivideContinent(continent, 2));
+function lookAt(lat, lon) {
+  rotationDegrees = -lon;
+  tiltDegrees = lat;
+}
 
-// const subdividedBorders = borders.map(border => subdivideBorderLine(border, 2));
+function lookAnimatedAt(lat, lon, baseDurationPerDegree = 50) {
+  const newRotation = -lon;
+  const newTilt = lat;
 
-// const subdividedPoints = points.map(points => subdivideBorderLine(border, 2));
+  startRotation = rotationDegrees;
+  startTilt = tiltDegrees;
+  targetRotation = newRotation;
+  targetTilt = newTilt;
+
+  arcStartLatLon = { lat: tiltDegrees, lon: -rotationDegrees };
+  arcEndLatLon = { lat, lon };
+
+  // Compute great-circle angular distance (in degrees)
+  const toRad = Math.PI / 180;
+  const φ1 = arcStartLatLon.lat * toRad;
+  const λ1 = arcStartLatLon.lon * toRad;
+  const φ2 = arcEndLatLon.lat * toRad;
+  const λ2 = arcEndLatLon.lon * toRad;
+
+  const dφ = φ2 - φ1;
+  const dλ = λ2 - λ1;
+
+  const a = Math.sin(dφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
+  const angularDistanceRad = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const angularDistanceDeg = angularDistanceRad * (180 / Math.PI);
+
+  // Use distance to determine duration
+  animationDuration = Math.max(500, angularDistanceDeg * baseDurationPerDegree); // clamp min time
+  animationStartTime = performance.now();
+  animationProgress = 0;
+}
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -177,86 +222,6 @@ function draw() {
   ctx.lineWidth = 1;
   ctx.lineJoin = 'round';
 
-  // subdividedContinents.forEach(continent => {
-  //   const rotatedVertices = [];
-  //   for (let i = 0; i < continent.length; i++) {
-  //     const p = continent[i];
-  //     if (p.lat > -84.351) {
-  //       const sph = sphericalToCartesian(p.lon, p.lat);
-  //       const rotated = rotateY(rotateX(sph, tiltRadians), rotationRadians);
-  //       rotatedVertices.push(rotated);
-  //     }
-  //   }
-
-  //   const pathSegments = [];
-  //   for (let i = 0; i < rotatedVertices.length; i++) {
-  //     const p1 = rotatedVertices[i];
-  //     const p2 = rotatedVertices[(i + 1) % rotatedVertices.length];
-  //     const intersection = findHorizonIntersection(p1, p2);
-
-  //     if (p1[2] >= 0) {
-  //       pathSegments.push({ point: p1, type: 'vertex' });
-  //     }
-  //     if (intersection) {
-  //       pathSegments.push(intersection);
-  //       if (p2[2] < 0) continue;
-  //     }
-  //   }
-
-  //   if (pathSegments.length < 3) return;
-
-  //   ctx.beginPath();
-  //   const first = pathSegments[0].point;
-  //   const fx = cx + first[0] * radius;
-  //   const fy = cy - first[1] * radius;
-  //   ctx.moveTo(fx, fy);
-
-  //   for (let i = 1; i < pathSegments.length; i++) {
-  //     const curr = pathSegments[i];
-  //     const prev = pathSegments[i - 1];
-  //     const currPt = curr.point;
-  //     const prevPt = prev.point;
-
-  //     const currX = cx + currPt[0] * radius;
-  //     const currY = cy - currPt[1] * radius;
-  //     const prevX = cx + prevPt[0] * radius;
-  //     const prevY = cy - prevPt[1] * radius;
-
-  //     if (prev.type === 'intersection' && curr.type === 'intersection') {
-  //       const startAngle = Math.atan2(prevY - cy, prevX - cx);
-  //       const endAngle = Math.atan2(currY - cy, currX - cx);
-  //       const crossZ = prevPt[0] * currPt[1] - prevPt[1] * currPt[0];
-  //       const ccw = crossZ > 0;
-  //       ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-  //     } else {
-  //       ctx.lineTo(currX, currY);
-  //     }
-  //   }
-
-  //   const last = pathSegments[pathSegments.length - 1];
-  //   const firstPt = pathSegments[0];
-  //   if (last.type === 'intersection' && firstPt.type === 'intersection') {
-  //     const lastPt = last.point;
-  //     const firstP = firstPt.point;
-
-  //     const lastX = cx + lastPt[0] * radius;
-  //     const lastY = cy - lastPt[1] * radius;
-  //     const firstX = cx + firstP[0] * radius;
-  //     const firstY = cy - firstP[1] * radius;
-
-  //     const startAngle = Math.atan2(lastY - cy, lastX - cx);
-  //     const endAngle = Math.atan2(firstY - cy, firstX - cx);
-  //     const crossZ = lastPt[0] * firstP[1] - lastPt[1] * firstP[0];
-  //     const ccw = crossZ > 0;
-  //     ctx.arc(cx, cy, radius, startAngle, endAngle, ccw);
-  //   } else {
-  //     ctx.lineTo(fx, fy);
-  //   }
-
-  //   ctx.closePath();
-  //   ctx.stroke();
-  // });
-
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 1.0;
 
@@ -266,52 +231,37 @@ function draw() {
 
       borderLine.forEach((p, i) => { // Inner .forEach loop callback starts {
             const sph = sphericalToCartesian(p.lon, p.lat);
-            const rotated = rotateY(rotateX(sph, tiltRadians), rotationRadians);
+            const rotated = rotateX(rotateY(sph, rotationRadians), tiltRadians);
 
-            if (rotated[2] >= 0) {  // if point is on the front side: starts {
+            if (rotated[2] >= 0) { 
                 const x = cx + rotated[0] * radius;
                 const y = cy - rotated[1] * radius;
 
-                if (lastX !== null && lastY !== null) { // if it's not the first visible point: starts {
+                if (lastX !== null && lastY !== null) { 
                     const dx = Math.abs(x - lastX);
                     const dy = Math.abs(y - lastY);
-                    // let thresholdX;
-                    // let thresholdY;
 
-                    //antarctida hack
+                    //antarctida drawing hack
                     if (p.lat < -80 && (dx > 10 || dy > 10)) {
                       ctx.moveTo(x, y)
                     } else {
                       ctx.lineTo(x, y);
                     }
-
-
                     ctx.lineTo(x, y);
-                } else { // else (it IS the first visible point): starts {
+                } else { 
                     ctx.moveTo(x, y);
-
-                    // const hue = Math.floor(Math.random() * 360);       // any hue 0–360
-                    // const saturation = 100;                            // full saturation
-                    // const lightness = 50;                              // mid lightness for vivid color
-
-                    // ctx.strokeStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
-                } // else (it IS the first visible point): ends }
+                }
 
                 lastX = x;
                 lastY = y;
-            } 
-
-            else { // else (point is on the back side): starts {
+            } else { 
                 lastX = null;
                 lastY = null;
-            } // else (point is on the back side): ends }
-
-
-
-         }); // Inner .forEach loop callback ends }, Inner .forEach method call ends )
+            } 
+         });
 
       ctx.stroke();
-  }); // Outer .forEach loop callback ends }, Outer .forEach method call ends )
+  });
 
 
   if (autoRotate) {
@@ -329,35 +279,144 @@ function draw() {
     fpsCounter.textContent = `FPS: ${fps}`;
   }
 
+  if (animationProgress < 1) {
+    const now = performance.now();
+    const t = Math.min((now - animationStartTime) / animationDuration, 1);
+
+    // Smoothstep easing
+    const easedT = t * t * (3 - 2 * t);
+
+    // rotationDegrees = startRotation + (targetRotation - startRotation) * easedT;
+    // tiltDegrees = startTilt + (targetTilt - startTilt) * easedT;
+
+    const interpolated = curvedInterpolationDirectional(arcStartLatLon, arcEndLatLon, easedT);
+    lookAt(interpolated.lat, interpolated.lon);
+
+    animationProgress = t;
+
+    cameraPath.push({ lat: tiltDegrees, lon: -rotationDegrees });
+  }
+
+  if (cameraPath.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'red';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < cameraPath.length; i++) {
+      const { lat, lon } = cameraPath[i];
+      const sph = sphericalToCartesian(lon, lat);
+      const rotated = rotateX(rotateY(sph, rotationRadians), tiltRadians);
+      if (rotated[2] >= 0) {
+        const x = cx + rotated[0] * radius;
+        const y = cy - rotated[1] * radius;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+  }
+
+  if (cameraPath.length >= 2) {
+    const p1 = cameraPath[cameraPath.length - 2];
+    const p2 = cameraPath[cameraPath.length - 1];
+    const sph1 = sphericalToCartesian(p1.lon, p1.lat);
+    const sph2 = sphericalToCartesian(p2.lon, p2.lat);
+    const rot1 = rotateX(rotateY(sph1, rotationRadians), tiltRadians);
+    const rot2 = rotateX(rotateY(sph2, rotationRadians), tiltRadians);
+
+    if (rot2[2] >= 0) {
+      const x1 = cx + rot1[0] * radius;
+      const y1 = cy - rot1[1] * radius;
+      const x2 = cx + rot2[0] * radius;
+      const y2 = cy - rot2[1] * radius;
+
+      if (animationProgress < 1) {
+        // ✈️ Draw triangle (plane)
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const angle = Math.atan2(dy, dx);
+
+        ctx.save();
+        ctx.translate(x2, y2);
+        ctx.rotate(angle);
+        ctx.fillStyle = 'red';
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-6, -3);
+        ctx.lineTo(-6, 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      } else {
+        // 🔴 Draw circle (destination)
+        ctx.beginPath();
+        ctx.fillStyle = 'red';
+        ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  if (cameraPath.length >= 2 && arcStartLatLon) {
+    const last = cameraPath[cameraPath.length - 1];
+    const sph = sphericalToCartesian(last.lon, last.lat);
+    const rotated = rotateX(rotateY(sph, rotationRadians), tiltRadians);
+
+    if (rotated[2] >= 0) {
+      const x = cx + rotated[0] * radius;
+      const y = cy - rotated[1] * radius;
+
+      // Compute current distance from start to this point
+      const distance = haversineKm(
+        arcStartLatLon.lat,
+        arcStartLatLon.lon,
+        last.lat,
+        last.lon
+      );
+
+      // Draw distance near the plane
+      ctx.font = '22px sans-serif';
+      //ctx.fillStyle = 'black';
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 10;
+      ctx.textAlign = 'center';
+
+      ctx.strokeText(`${Math.round(distance)} km`, x, y + 32);
+      ctx.fillText(`${Math.round(distance)} km`, x, y + 32);
+    }
+  }
   requestAnimationFrame(draw);
 }
 
 canvas.addEventListener('mousedown', (e) => {
-  isDragging = true;
-  lastMouseX = e.clientX;
-  lastMouseY = e.clientY;
-  autoRotate = false;
+   lookAnimatedAt( 35.6764, 139.6500);// Tokyo 35.6764° N, 139.6500° E
+   //lookAnimatedAt( 36.7783, -119.4179); //, 3000); // California 36.7783° N, 119.4179° W
+
+    // isDragging = true;
+    // lastMouseX = e.clientX;
+    // lastMouseY = e.clientY;
+    // autoRotate = false;
 });
 
 canvas.addEventListener('mouseup', () => {
-  isDragging = false;
-  autoRotate = false;
+    // isDragging = false;
+    // autoRotate = false;
 });
 
 canvas.addEventListener('mousemove', (e) => {
-  if (isDragging) {
-    const deltaX = e.clientX - lastMouseX;
-    const deltaY = -(e.clientY - lastMouseY);
+  // if (isDragging) {
+  //   const deltaX = e.clientX - lastMouseX;
+  //   const deltaY = -(e.clientY - lastMouseY);
 
-    rotationDegrees += deltaX * 0.1;
-    tiltDegrees -= deltaY * 0.1;
+  //   rotationDegrees += deltaX * 0.1;
+  //   tiltDegrees -= deltaY * 0.1;
 
-    lastMouseX = e.clientX;
-    lastMouseY = e.clientY;
-  }
+  //   lastMouseX = e.clientX;
+  //   lastMouseY = e.clientY;
+  // }
 });
 
 draw();
+lookAt( 51.9194, 19.1451); // 51.9194° N, 19.1451° E Poland
 </script>
 </body>
 </html>
